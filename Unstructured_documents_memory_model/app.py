@@ -166,6 +166,7 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
+
 # --- MAIN LOGIC ---
 if prompt := st.chat_input("Ask about the Kernel (e.g. 'Explain AUDIT config')"):
     # 1. Show User Message
@@ -173,14 +174,21 @@ if prompt := st.chat_input("Ask about the Kernel (e.g. 'Explain AUDIT config')")
     st.chat_message("user").write(prompt)
 
     with st.chat_message("assistant"):
-        # 2. STEP 1: EMBEDDING
-        with st.status("Thinking...", expanded=False) as status:
-            status.write("🧠 Generating Query Vector (Lamatic)...")
+        
+        # Initialize variables
+        context_text = ""
+        answer = ""
+        
+        # 2. THE THINKING PROCESS 
+        with st.status("Analyzing Request...", expanded=True) as status:
+            
+            # Step A: Embed
+            st.write("🧠 Generating Query Vector (Lamatic)...")
             query_vector = get_embedding(prompt)
             
             if query_vector:
-                # 3. STEP 2: RETRIEVAL
-                status.write("🔍 Searching Qdrant Index...")
+                # Step B: Search
+                st.write("🔍 Searching Qdrant Index...")
                 try:
                     search_results = client.search(
                         collection_name=COLLECTION_NAME,
@@ -188,29 +196,35 @@ if prompt := st.chat_input("Ask about the Kernel (e.g. 'Explain AUDIT config')")
                         limit=4
                     )
                 except Exception as e:
-                    st.error(f"Qdrant Search Error: {e}")
+                    st.error(f"Search failed: {e}")
                     search_results = []
-                
+
                 if search_results:
-                    # Compile context
+                    # Step C: Compile Context
                     context_text = "\n\n---\n\n".join([hit.payload.get("text", "") for hit in search_results])
-                    status.write(f"✅ Found {len(search_results)} relevant docs.")
+                    st.write(f"✅ Found {len(search_results)} relevant documents.")
                     
-                    # 4. STEP 3: GENERATION
-                    status.write("📝 Synthesizing Answer...")
+                    # Step D: Generate
+                    st.write("📝 Synthesizing Answer with LLM...")
                     answer = get_answer(prompt, context_text)
                     
-                    # Show the answer
-                    st.write(answer)
-                    
-                    # Save to history
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
-                    
-                    # Optional: Show Source (Judges love this)
-                    with st.expander("View Retrieved Context (Source)"):
-                        st.text(context_text)
+                    # Close the status box cleanly
+                    status.update(label="Analysis Complete", state="complete", expanded=False)
                 else:
-                    st.warning("No relevant documentation found in Qdrant.")
-                    status.update(label="No context found", state="error")
+                    status.update(label="No Context Found", state="error")
+                    st.warning("I couldn't find any relevant docs in Qdrant.")
             else:
                 status.update(label="Vectorization Failed", state="error")
+
+        # 3. SHOW THE ANSWER 
+        if answer:
+            st.markdown(answer)
+            
+            # Save to history
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            
+            # 4. OPTIONAL: Sources Expander
+            if context_text:
+                with st.expander("📚 View Source Context"):
+                    st.caption("Retrieved from Linux Kernel Docs via Qdrant")
+                    st.text(context_text)
