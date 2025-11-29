@@ -1,0 +1,6 @@
+# HTTP Client for communicating with the Lamatic GraphQL API
+requests>=2.31.0
+
+# Vector Database Client for storing embeddings
+qdrant-client>=1.7.0
+
