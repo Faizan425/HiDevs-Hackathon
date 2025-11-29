@@ -39,6 +39,7 @@ def get_qdrant_client():
 
 client = get_qdrant_client()
 
+
 # --- HELPER 1: Get Vector  ---
 def get_embedding(text):
     """Calls Lamatic Embedder Flow to convert text -> vector"""
@@ -57,27 +58,67 @@ def get_embedding(text):
     
     try:
         resp = requests.post(ENDPOINT, json={"query": query, "variables": variables}, headers=headers)
+        
+        # DEBUG: Uncomment this line if you still get errors to see the raw data on screen
+        # st.write("Debug Raw Response:", resp.text) 
+        
         if resp.status_code != 200:
             st.error(f"Embedder Error: {resp.text}")
             return None
 
         data = resp.json()
-        raw = data['data']['executeWorkflow']['result']
-        parsed = json.loads(raw)
         
-        # Extract Vector (Handle nested 'body' if present)
-        vector_data = parsed.get("body", {}).get("vector") or parsed.get("vector")
-        
-        # THE LIST FIX: If it returns [[0.1, 0.2...]], grab the first item
-        if vector_data and isinstance(vector_data[0], list):
-            return vector_data[0]
+        # 1. Parse the inner GraphQL result string
+        try:
+            raw_result = data['data']['executeWorkflow']['result']
+            if isinstance(raw_result, str):
+                parsed = json.loads(raw_result)
+            else:
+                parsed = raw_result
+        except:
+            st.error("Failed to parse GraphQL result.")
+            return None
             
-        return vector_data
+        # 2. "Smart Find" Logic: Hunt for the List of Floats
+        # This handles {"vector": [...]}, {"body": {"vector": [...]}}, or just [...]
+        
+        def find_vector_recursive(obj):
+            """Recursively searches for a list of floats"""
+            if isinstance(obj, list):
+                # Check if it's a list of floats (The Vector!)
+                if len(obj) > 0 and isinstance(obj[0], (float, int)):
+                    return obj
+                # Check if it's a list of lists (Batch Vector)
+                if len(obj) > 0 and isinstance(obj[0], list):
+                    return find_vector_recursive(obj[0])
+                return None
+            
+            if isinstance(obj, dict):
+                # Check common keys first
+                for key in ['vector', 'embeddings', 'data', 'body']:
+                    if key in obj:
+                        found = find_vector_recursive(obj[key])
+                        if found: return found
+                # If not in common keys, search all values
+                for value in obj.values():
+                    found = find_vector_recursive(value)
+                    if found: return found
+            return None
+
+        final_vector = find_vector_recursive(parsed)
+        
+        if final_vector:
+            return final_vector
+        else:
+            st.error("Vector not found in response structure.")
+            # st.write("Parsed Data was:", parsed) # Debug info
+            return None
+            
     except Exception as e:
-        st.error(f"Failed to generate embedding: {e}")
+        st.error(f"Connection Failed: {e}")
         return None
 
-# --- HELPER 2: Get Answer (The "Brain" Step) ---
+# --- HELPER 2: Get Answer ---
 def get_answer(question, context):
     """Calls Lamatic Chat Flow with the Question + Retrieved Context"""
     query = """
