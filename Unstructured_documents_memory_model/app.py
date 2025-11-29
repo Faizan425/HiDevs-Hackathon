@@ -47,17 +47,32 @@ def send_question(question):
                 return f"Server Error: {data['errors'][0]['message']}"
 
             try:
+                # 1. Get the raw result
                 raw_result = data['data']['executeWorkflow']['result']
-                # Parse JSON string if needed
-                try:
-                    parsed = json.loads(raw_result)
-                    if isinstance(parsed, dict):
-                        return parsed.get('body', {}).get('answer') or \
-                               parsed.get('answer') or \
-                               parsed.get('response') or str(parsed)
-                    return str(parsed)
-                except:
-                    return raw_result # Plain text
+
+                # 2. HELPER: Function to extract text from a dict
+                def extract_text(obj):
+                    return obj.get('body', {}).get('answer') or \
+                           obj.get('answer') or \
+                           obj.get('response') or \
+                           str(obj)
+
+                # 3. CASE A: It is ALREADY a Dictionary (This is what is happening to you)
+                if isinstance(raw_result, dict):
+                    return extract_text(raw_result)
+                
+                # 4. CASE B: It is a String (Try to parse it)
+                if isinstance(raw_result, str):
+                    try:
+                        parsed = json.loads(raw_result)
+                        if isinstance(parsed, dict):
+                            return extract_text(parsed)
+                        return str(parsed)
+                    except:
+                        return raw_result # It's just plain text
+                
+                return str(raw_result)
+
             except Exception as e:
                 return f"Parsing Error: {e}"
         else:
