@@ -10,7 +10,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- CONFIGURATION ) ---
+# --- CONFIGURATION ---
 try:
     # API Credentials
     API_KEY = st.secrets["LAMATIC_API_KEY"]
@@ -39,8 +39,7 @@ def get_qdrant_client():
 
 client = get_qdrant_client()
 
-
-# --- HELPER 1: Get Vector  ---
+# --- HELPER 1: Get Vector ---
 def get_embedding(text):
     """Calls Lamatic Embedder Flow to convert text -> vector"""
     query = """
@@ -58,67 +57,55 @@ def get_embedding(text):
     
     try:
         resp = requests.post(ENDPOINT, json={"query": query, "variables": variables}, headers=headers)
-        
-        # DEBUG: Uncomment this line if you still get errors to see the raw data on screen
-        # st.write("Debug Raw Response:", resp.text) 
-        
         if resp.status_code != 200:
             st.error(f"Embedder Error: {resp.text}")
             return None
 
         data = resp.json()
         
-        # 1. Parse the inner GraphQL result string
-        try:
-            raw_result = data['data']['executeWorkflow']['result']
-            if isinstance(raw_result, str):
-                parsed = json.loads(raw_result)
-            else:
-                parsed = raw_result
-        except:
-            st.error("Failed to parse GraphQL result.")
+        # Check for GraphQL errors
+        if 'errors' in data:
+            st.error(f"GraphQL Error: {data['errors'][0]['message']}")
             return None
-            
-        # 2. "Smart Find" Logic: Hunt for the List of Floats
-        # This handles {"vector": [...]}, {"body": {"vector": [...]}}, or just [...]
+
+        raw = data['data']['executeWorkflow']['result']
         
+        # Parse the inner result string
+        try:
+            if isinstance(raw, str):
+                parsed = json.loads(raw)
+            else:
+                parsed = raw
+        except:
+            st.error("Failed to parse embedding result.")
+            return None
+        
+        # Smart Find Logic: Hunt for the List of Floats
         def find_vector_recursive(obj):
-            """Recursively searches for a list of floats"""
             if isinstance(obj, list):
-                # Check if it's a list of floats (The Vector!)
                 if len(obj) > 0 and isinstance(obj[0], (float, int)):
                     return obj
-                # Check if it's a list of lists (Batch Vector)
                 if len(obj) > 0 and isinstance(obj[0], list):
                     return find_vector_recursive(obj[0])
                 return None
-            
             if isinstance(obj, dict):
-                # Check common keys first
                 for key in ['vector', 'embeddings', 'data', 'body']:
                     if key in obj:
                         found = find_vector_recursive(obj[key])
                         if found: return found
-                # If not in common keys, search all values
                 for value in obj.values():
                     found = find_vector_recursive(value)
                     if found: return found
             return None
 
         final_vector = find_vector_recursive(parsed)
-        
-        if final_vector:
-            return final_vector
-        else:
-            st.error("Vector not found in response structure.")
-            # st.write("Parsed Data was:", parsed) # Debug info
-            return None
             
+        return final_vector
     except Exception as e:
-        st.error(f"Connection Failed: {e}")
+        st.error(f"Failed to generate embedding: {e}")
         return None
 
-# --- HELPER 2: Get Answer ---
+# --- HELPER 2: Get Answer---
 def get_answer(question, context):
     """Calls Lamatic Chat Flow with the Question + Retrieved Context"""
     query = """
@@ -140,6 +127,9 @@ def get_answer(question, context):
     try:
         resp = requests.post(ENDPOINT, json={"query": query, "variables": variables}, headers=headers)
         data = resp.json()
+        
+        if 'errors' in data:
+             return f"Server Error: {data['errors'][0]['message']}"
         
         # Parse Result
         raw_result = data['data']['executeWorkflow']['result']
@@ -191,11 +181,15 @@ if prompt := st.chat_input("Ask about the Kernel (e.g. 'Explain AUDIT config')")
             if query_vector:
                 # 3. STEP 2: RETRIEVAL
                 status.write("🔍 Searching Qdrant Index...")
-                search_results = client.search(
-                    collection_name=COLLECTION_NAME,
-                    query_vector=query_vector,
-                    limit=4
-                )
+                try:
+                    search_results = client.search(
+                        collection_name=COLLECTION_NAME,
+                        query_vector=query_vector,
+                        limit=4
+                    )
+                except Exception as e:
+                    st.error(f"Qdrant Search Error: {e}")
+                    search_results = []
                 
                 if search_results:
                     # Compile context
@@ -219,5 +213,4 @@ if prompt := st.chat_input("Ask about the Kernel (e.g. 'Explain AUDIT config')")
                     st.warning("No relevant documentation found in Qdrant.")
                     status.update(label="No context found", state="error")
             else:
-                st.error("Failed to vectorize question.")
                 status.update(label="Vectorization Failed", state="error")
