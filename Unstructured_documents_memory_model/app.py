@@ -193,7 +193,7 @@ if prompt := st.chat_input("Ask about the Kernel (e.g. 'Explain AUDIT config')")
                     search_results = client.search(
                         collection_name=COLLECTION_NAME,
                         query_vector=query_vector,
-                        limit=4
+                        limit=13
                     )
                 except Exception as e:
                     st.error(f"Search failed: {e}")
